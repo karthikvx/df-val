@@ -110,8 +110,9 @@ def preprocess_mortgage_data(glue_context, input_path, output_path):
 
 The script now expects training data in parquet format (as per training script) and automatically handles the complete ML lifecycle using existing, comprehensive feature engineering and validation logic.
 
-Would you like me to create the next component, such as:
+
 1. **Real-time inference endpoint configuration**
 2. **Batch inference pipeline**
+In complete ... To DO
 3. **CI/CD automation with CodePipeline**
-4. **Model monitoring dashboard**?
+4. **Model monitoring dashboard**
