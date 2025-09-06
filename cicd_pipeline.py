@@ -832,8 +832,347 @@ def register_model(model_path, model_package_group, approval_status='PendingManu
         response = sagemaker.create_model_package(
             ModelPackageGroupName=model_package_group,
             ModelPackageDescription=model_description,
+            ModelApprovalStatus=approval_status,
             InferenceSpecification={
                 'Containers': [
                     {
                         'Image': '246618743249.dkr.ecr.us-west-2.amazonaws.com/sagemaker-scikit-learn:1.2-1-cpu-py3',
-                        'ModelDataUrl': model_
+                        'ModelDataUrl': model_path,
+                        'Environment': {
+                            'SAGEMAKER_PROGRAM': 'inference.py',
+                            'SAGEMAKER_SUBMIT_DIRECTORY': '/opt/ml/code'
+                        }
+                    }
+                ],
+                'SupportedTransformInstanceTypes': ['ml.m5.large', 'ml.m5.xlarge'],
+                'SupportedRealtimeInferenceInstanceTypes': ['ml.m5.large', 'ml.m5.xlarge', 'ml.c5.xlarge'],
+                'SupportedContentTypes': ['application/json', 'text/csv'],
+                'SupportedResponseMIMETypes': ['application/json']
+            },
+            ModelMetrics={
+                'ModelQuality': {
+                    'Statistics': {
+                        'ContentType': 'application/json',
+                        'S3Uri': f"s3://{os.environ.get('ARTIFACT_BUCKET', '')}/metrics/model_quality.json"
+                    }
+                },
+                'Bias': {
+                    'Report': {
+                        'ContentType': 'application/json', 
+                        'S3Uri': f"s3://{os.environ.get('ARTIFACT_BUCKET', '')}/metrics/bias_report.json"
+                    }
+                },
+                'Explainability': {
+                    'Report': {
+                        'ContentType': 'application/json',
+                        'S3Uri': f"s3://{os.environ.get('ARTIFACT_BUCKET', '')}/metrics/explainability_report.json"
+                    }
+                }
+            }
+        )
+        
+        model_package_arn = response['ModelPackageArn']
+        print(f"Successfully registered model: {model_package_arn}")
+        
+        # Create deployment report
+        deployment_report = {
+            'model_package_arn': model_package_arn,
+            'model_package_group': model_package_group,
+            'deployment_time': datetime.now().isoformat(),
+            'approval_status': approval_status,
+            'model_description': model_description
+        }
+        
+        with open('model_registration_report.json', 'w') as f:
+            json.dump(deployment_report, f, indent=2)
+            
+        return model_package_arn
+        
+    except Exception as e:
+        print(f"Model registration failed: {str(e)}")
+        raise
+
+if __name__ == "__main__":
+    import sys
+    import time
+    model_path = sys.argv[1]
+    model_package_group = sys.argv[2]
+    approval_status = sys.argv[3] if len(sys.argv) > 3 else 'PendingManualApproval'
+    register_model(model_path, model_package_group, approval_status)
+'''
+        
+        scripts['model_registration'] = model_registration_script
+        
+        return scripts
+
+    def setup_pipeline(self, sns_topic_arn=None):
+        """Main method to set up the complete ML CI/CD pipeline"""
+        
+        try:
+            logger.info(f"Setting up ML CI/CD Pipeline: {self.pipeline_name}")
+            
+            # Step 1: Create artifact bucket if it doesn't exist
+            self.create_artifact_bucket()
+            
+            # Step 2: Create CodeBuild projects
+            projects = self.create_codebuild_projects()
+            
+            # Step 3: Create the main pipeline
+            pipeline_name = self.create_pipeline(projects)
+            
+            # Step 4: Create deployment scripts
+            scripts = self.create_deployment_scripts()
+            self.save_deployment_scripts(scripts)
+            
+            # Step 5: Set up notifications if SNS topic provided
+            if sns_topic_arn:
+                self.create_pipeline_notifications(sns_topic_arn)
+            
+            # Step 6: Create monitoring and alerting
+            self.create_monitoring_dashboard()
+            
+            logger.info("ML CI/CD Pipeline setup completed successfully!")
+            
+            return {
+                'pipeline_name': pipeline_name,
+                'projects': projects,
+                'artifact_bucket': self.artifact_bucket,
+                'region': self.region
+            }
+            
+        except Exception as e:
+            logger.error(f"Pipeline setup failed: {str(e)}")
+            raise
+
+    def create_artifact_bucket(self):
+        """Create S3 bucket for pipeline artifacts if it doesn't exist"""
+        
+        try:
+            # Check if bucket exists
+            self.s3.head_bucket(Bucket=self.artifact_bucket)
+            logger.info(f"Artifact bucket already exists: {self.artifact_bucket}")
+            
+        except Exception as e:
+            if 'NotFound' in str(e):
+                # Create bucket
+                if self.region == 'us-east-1':
+                    self.s3.create_bucket(Bucket=self.artifact_bucket)
+                else:
+                    self.s3.create_bucket(
+                        Bucket=self.artifact_bucket,
+                        CreateBucketConfiguration={'LocationConstraint': self.region}
+                    )
+                
+                # Enable versioning
+                self.s3.put_bucket_versioning(
+                    Bucket=self.artifact_bucket,
+                    VersioningConfiguration={'Status': 'Enabled'}
+                )
+                
+                # Set lifecycle policy
+                lifecycle_policy = {
+                    'Rules': [
+                        {
+                            'ID': 'DeleteOldArtifacts',
+                            'Status': 'Enabled',
+                            'Filter': {'Prefix': 'artifacts/'},
+                            'Expiration': {'Days': 90}
+                        },
+                        {
+                            'ID': 'TransitionToIA',
+                            'Status': 'Enabled', 
+                            'Filter': {'Prefix': 'models/'},
+                            'Transitions': [
+                                {
+                                    'Days': 30,
+                                    'StorageClass': 'STANDARD_IA'
+                                },
+                                {
+                                    'Days': 90,
+                                    'StorageClass': 'GLACIER'
+                                }
+                            ]
+                        }
+                    ]
+                }
+                
+                self.s3.put_bucket_lifecycle_configuration(
+                    Bucket=self.artifact_bucket,
+                    LifecycleConfiguration=lifecycle_policy
+                )
+                
+                logger.info(f"Created artifact bucket: {self.artifact_bucket}")
+            else:
+                raise
+
+    def save_deployment_scripts(self, scripts):
+        """Save deployment scripts to S3"""
+        
+        try:
+            for script_name, script_content in scripts.items():
+                key = f"scripts/{script_name}.py"
+                
+                self.s3.put_object(
+                    Bucket=self.artifact_bucket,
+                    Key=key,
+                    Body=script_content,
+                    ContentType='text/plain'
+                )
+                
+            logger.info("Deployment scripts saved to S3")
+            
+        except Exception as e:
+            logger.error(f"Failed to save deployment scripts: {str(e)}")
+            raise
+
+    def create_monitoring_dashboard(self):
+        """Create CloudWatch dashboard for pipeline monitoring"""
+        
+        cloudwatch = boto3.client('cloudwatch', region_name=self.region)
+        
+        dashboard_body = {
+            "widgets": [
+                {
+                    "type": "metric",
+                    "x": 0, "y": 0,
+                    "width": 12, "height": 6,
+                    "properties": {
+                        "metrics": [
+                            ["AWS/CodePipeline", "PipelineExecutionSuccess", "PipelineName", self.pipeline_name],
+                            [".", "PipelineExecutionFailure", ".", "."]
+                        ],
+                        "period": 300,
+                        "stat": "Sum",
+                        "region": self.region,
+                        "title": "Pipeline Execution Status"
+                    }
+                },
+                {
+                    "type": "metric", 
+                    "x": 12, "y": 0,
+                    "width": 12, "height": 6,
+                    "properties": {
+                        "metrics": [
+                            ["AWS/CodeBuild", "Duration", "ProjectName", f"{self.pipeline_name}-training"],
+                            [".", ".", ".", f"{self.pipeline_name}-testing"],
+                            [".", ".", ".", f"{self.pipeline_name}-data-validation"]
+                        ],
+                        "period": 300,
+                        "stat": "Average",
+                        "region": self.region,
+                        "title": "Build Duration"
+                    }
+                },
+                {
+                    "type": "log",
+                    "x": 0, "y": 6,
+                    "width": 24, "height": 6,
+                    "properties": {
+                        "query": f"SOURCE '/aws/codebuild/{self.pipeline_name}-training'\n| fields @timestamp, @message\n| sort @timestamp desc\n| limit 100",
+                        "region": self.region,
+                        "title": "Recent Training Logs"
+                    }
+                }
+            ]
+        }
+        
+        try:
+            cloudwatch.put_dashboard(
+                DashboardName=f"{self.pipeline_name}-monitoring",
+                DashboardBody=json.dumps(dashboard_body)
+            )
+            
+            logger.info(f"Created monitoring dashboard: {self.pipeline_name}-monitoring")
+            
+        except Exception as e:
+            logger.error(f"Failed to create monitoring dashboard: {str(e)}")
+
+    def trigger_pipeline(self):
+        """Trigger pipeline execution"""
+        
+        try:
+            response = self.codepipeline.start_pipeline_execution(
+                name=self.pipeline_name
+            )
+            
+            execution_id = response['pipelineExecutionId']
+            logger.info(f"Started pipeline execution: {execution_id}")
+            
+            return execution_id
+            
+        except Exception as e:
+            logger.error(f"Failed to trigger pipeline: {str(e)}")
+            raise
+
+    def get_pipeline_status(self):
+        """Get current pipeline execution status"""
+        
+        try:
+            response = self.codepipeline.get_pipeline_execution(
+                pipelineName=self.pipeline_name,
+                pipelineExecutionId=self.get_latest_execution_id()
+            )
+            
+            return {
+                'status': response['pipelineExecution']['status'],
+                'execution_id': response['pipelineExecution']['pipelineExecutionId'],
+                'start_time': response['pipelineExecution']['creationTime'],
+                'artifacts': response['pipelineExecution'].get('artifactRevisions', [])
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to get pipeline status: {str(e)}")
+            return None
+
+    def get_latest_execution_id(self):
+        """Get the latest pipeline execution ID"""
+        
+        try:
+            response = self.codepipeline.list_pipeline_executions(
+                pipelineName=self.pipeline_name,
+                maxResults=1
+            )
+            
+            if response['pipelineExecutionSummaries']:
+                return response['pipelineExecutionSummaries'][0]['pipelineExecutionId']
+            else:
+                return None
+                
+        except Exception as e:
+            logger.error(f"Failed to get latest execution ID: {str(e)}")
+            return None
+
+
+# Example usage and configuration
+if __name__ == "__main__":
+    
+    # Pipeline configuration
+    pipeline_config = {
+        'pipeline_name': 'mortgage-risk-ml-pipeline',
+        'region': 'us-east-1',
+        'artifact_bucket': 'mortgage-risk-ml-artifacts-bucket',
+        'source_repo': {
+            'bucket': 'mortgage-risk-source-code',
+            'key': 'source-code.zip'
+        }
+    }
+    
+    # Initialize pipeline
+    ml_pipeline = MLCICDPipeline(
+        pipeline_name=pipeline_config['pipeline_name'],
+        region=pipeline_config['region'],
+        source_repo=pipeline_config['source_repo'],
+        artifact_bucket=pipeline_config['artifact_bucket']
+    )
+    
+    # Setup the complete pipeline
+    try:
+        setup_result = ml_pipeline.setup_pipeline()
+        print(f"Pipeline setup completed: {setup_result}")
+        
+        # Trigger initial pipeline execution
+        execution_id = ml_pipeline.trigger_pipeline()
+        print(f"Pipeline execution started: {execution_id}")
+        
+    except Exception as e:
+        print(f"Pipeline setup failed: {str(e)}")
