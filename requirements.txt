@@ -1,4 +1,11 @@
-# requirements.txt
-
-# This file contains the requirements for the Python files in the folder.
-# It lists the packages that the Python files depend on.
+boto3==1.17.20
+sagemaker==2.14.0
+sklearn==1.0.2
+joblib==1.1.31
+matplotlib==3.5.1
+seaborn==5.4.0
+plotly=6.7.0 
+pandas==1.4.2
+numpy==1.20.0
+mlenlib==0.8.3
+mlentools==5.6.0
