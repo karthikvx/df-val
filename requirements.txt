@@ -1,0 +1,4 @@
+# requirements.txt
+
+# This file contains the requirements for the Python files in the folder.
+# It lists the packages that the Python files depend on.
