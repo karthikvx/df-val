@@ -30,16 +30,16 @@ class MortgageLoanModelValidator:
     def _feature_engineering(self, df):
         """Apply same feature engineering as training"""
         # Debt-to-income ratio
-        df['debt_to_income_ratio'] = df['monthly_debt'] / df['monthly_income']
+        df['debt_to_income_ratio'] = df['monthly_debt'] / df['monthly_income'].replace(0, np.nan)
         
         # Loan-to-value ratio  
-        df['loan_to_value_ratio'] = df['loan_amount'] / df['property_value']
+        df['loan_to_value_ratio'] = df['loan_amount'] / df['property_value'].replace(0, np.nan)
         
         # Credit utilization
-        df['credit_utilization'] = df['credit_used'] / df['credit_limit']
+        df['credit_utilization'] = df['credit_used'] / df['credit_limit'].replace(0, np.nan)
         
         # Payment-to-income ratio
-        df['payment_to_income'] = df['monthly_payment'] / df['monthly_income']
+        df['payment_to_income'] = df['monthly_payment'] / df['monthly_income'].replace(0, np.nan)
         
         # Age calculations
         df['borrower_age'] = 2024 - df['birth_year']
